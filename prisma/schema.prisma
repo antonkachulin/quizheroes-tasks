@@ -1,0 +1,81 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String        @id @default(cuid())
+  login            String        @unique
+  password         String
+  role             String        @default("user")
+  telegramChatId   String?
+  telegramLinkCode String?
+  tasks            Task[]        @relation("TaskOwner")
+  assignedTasks    Task[]        @relation("TaskAssignee")
+  createdTasks     Task[]        @relation("TaskCreator")
+  taskComments     TaskComment[]
+  chatMessages     ChatMessage[]
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  text      String
+  createdAt DateTime @default(now())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+}
+
+model Task {
+  id                String    @id @default(cuid())
+  title             String
+  description       String
+  status            String    @default("todo")
+  priority          Int
+  effort            Int
+  dueDate           DateTime?
+  eventAt           DateTime?
+  weekStart         DateTime?
+  recurrenceType    String?
+  recurrenceIntervalDays Int?
+  recurrenceActive  Boolean   @default(false)
+  recurrenceParentId String?
+  recurrenceNextDate DateTime?
+  overdueReminderSentAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  userId            String
+  user              User      @relation("TaskOwner", fields: [userId], references: [id], onDelete: Cascade)
+  createdById       String?
+  createdBy         User?     @relation("TaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  assigneeId        String?
+  assignee          User?     @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  recurrenceParent  Task?     @relation("TaskRecurrence", fields: [recurrenceParentId], references: [id], onDelete: SetNull)
+  recurrenceChildren Task[]   @relation("TaskRecurrence")
+  comments          TaskComment[]
+
+  @@index([recurrenceActive, recurrenceNextDate])
+}
+
+model TaskComment {
+  id        String   @id @default(cuid())
+  text      String
+  createdAt DateTime @default(now())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@index([createdAt])
+}
