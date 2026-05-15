@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { verifySessionToken } from "@/lib/session";
-import { taskListInclude, type TaskListItem } from "@/lib/task-list";
+import { taskListInclude } from "@/lib/task-list";
 import {
   normalizeToUtcMondayKey,
   utcMondayKeyContaining,
@@ -30,7 +30,7 @@ export default async function TasksPage({
 
   const bounds = weekStartBoundsUtc(weekMondayKey);
 
-  const tasks = (await prisma.task.findMany({
+  const tasks = await prisma.task.findMany({
     where: {
       OR: [
         { status: "backlog" },
@@ -41,8 +41,8 @@ export default async function TasksPage({
       ],
     },
     orderBy: { createdAt: "desc" },
-    include: taskListInclude as never,
-  })) as TaskListItem[];
+    include: taskListInclude,
+  });
 
   const dbUser = await prisma.user.findUnique({
     where: { id: session.userId },
