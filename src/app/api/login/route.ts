@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createSessionToken } from "@/lib/session";
+import { createSessionToken, sessionCookieSecure } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { verifyPassword } from "@/lib/password";
 
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
   const response = NextResponse.json({ ok: true });
   response.cookies.set("session", token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: sessionCookieSecure(request),
     sameSite: "lax",
     path: "/",
     maxAge: 60 * 60 * 24,

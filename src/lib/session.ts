@@ -27,6 +27,16 @@ export function createSessionToken(payload: SessionPayload): string {
   return `${encodedPayload}.${signature}`;
 }
 
+/** Use Secure cookies only when the incoming request is HTTPS (or TLS is terminated and x-forwarded-proto says https). */
+export function sessionCookieSecure(request: Request): boolean {
+  const forwarded = request.headers.get("x-forwarded-proto");
+  if (forwarded) {
+    const first = forwarded.split(",")[0]?.trim().toLowerCase();
+    return first === "https";
+  }
+  return new URL(request.url).protocol === "https:";
+}
+
 export function verifySessionToken(token: string | undefined): SessionPayload | null {
   if (!token) {
     return null;
