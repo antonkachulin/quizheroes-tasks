@@ -6,7 +6,13 @@ import {
   shiftUtcMondayKey,
   utcMondayKeyContaining,
 } from "@/lib/week";
-import type { DragEvent, FormEvent, KeyboardEvent, ReactNode } from "react";
+import type {
+  DragEvent,
+  FormEvent,
+  KeyboardEvent,
+  ReactNode,
+  TouchEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -14,6 +20,46 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 const TASK_STATUSES = ["backlog", "todo", "in_progress", "done"] as const;
 
 const REVIEW_CARRY_STATUSES: readonly string[] = ["todo", "in_progress"];
+
+function compareSortOrder(a: TaskListItem, b: TaskListItem): number {
+  const oa = a.sortOrder ?? 0;
+  const ob = b.sortOrder ?? 0;
+  if (oa !== ob) return oa - ob;
+  return (
+    new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
+}
+
+function taskInKanbanColumn(
+  task: TaskListItem,
+  columnStatus: (typeof TASK_STATUSES)[number],
+  weekMondayKey: string,
+): boolean {
+  if (task.status !== columnStatus) return false;
+  if (columnStatus === "backlog") return true;
+  return sprintTaskBelongsToWeek(task, weekMondayKey);
+}
+
+function reorderTaskIds(
+  ids: string[],
+  draggedId: string,
+  targetId: string,
+  position: "before" | "after",
+): string[] {
+  const fromIdx = ids.indexOf(draggedId);
+  let toIdx = ids.indexOf(targetId);
+  if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return ids;
+  const next = [...ids];
+  next.splice(fromIdx, 1);
+  if (position === "after") toIdx += 1;
+  if (fromIdx < toIdx) toIdx -= 1;
+  next.splice(toIdx, 0, draggedId);
+  return next;
+}
+
+function moveTaskIdToEnd(ids: string[], draggedId: string): string[] {
+  return [...ids.filter((id) => id !== draggedId), draggedId];
+}
 
 function sprintTaskBelongsToWeek(
   task: TaskListItem,
@@ -34,6 +80,34 @@ const COLUMN_LABELS: Record<(typeof TASK_STATUSES)[number], string> = {
   in_progress: "В работе",
   done: "Сделано",
 };
+
+const MOBILE_MEDIA_QUERY = "(max-width: 767px)";
+
+function useIsMobileViewport(): boolean {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_MEDIA_QUERY);
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return isMobile;
+}
+
+function adjacentTaskStatus(
+  status: string,
+  direction: "next" | "prev",
+): (typeof TASK_STATUSES)[number] | null {
+  const idx = TASK_STATUSES.indexOf(
+    status as (typeof TASK_STATUSES)[number],
+  );
+  if (idx < 0) return null;
+  if (direction === "next") {
+    return idx < TASK_STATUSES.length - 1 ? TASK_STATUSES[idx + 1]! : null;
+  }
+  return idx > 0 ? TASK_STATUSES[idx - 1]! : null;
+}
 
 const TASK_PRIORITIES = [1, 2, 3, 4, 5] as const;
 
@@ -174,6 +248,7 @@ const btnChatGhostSm =
   "inline-flex shrink-0 items-center justify-center rounded-lg border border-zinc-600 bg-zinc-800 px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition hover:border-zinc-500 hover:bg-zinc-700";
 
 function TasksChatPanel() {
+  const isMobile = useIsMobileViewport();
   const [open, setOpen] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [messages, setMessages] = useState<ChatRow[]>([]);
@@ -262,10 +337,15 @@ function TasksChatPanel() {
     }
   }
 
-  return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-[85] flex flex-col items-end gap-2">
-      {open ? (
-        <div className="pointer-events-auto flex max-h-[min(28rem,calc(100vh-5rem))] w-[min(100vw-2rem,22rem)] flex-col overflow-hidden rounded-xl border border-zinc-700/90 bg-zinc-950/98 shadow-2xl shadow-black/50 ring-1 ring-zinc-800/80 backdrop-blur-sm">
+  const chatPanel = open ? (
+        <div
+          className={cx(
+            "pointer-events-auto flex flex-col overflow-hidden bg-zinc-950/98 shadow-2xl shadow-black/50",
+            isMobile
+              ? "fixed inset-0 z-[92] border-0"
+              : "max-h-[min(28rem,calc(100vh-5rem))] w-[min(100vw-2rem,22rem)] rounded-xl border border-zinc-700/90 ring-1 ring-zinc-800/80 backdrop-blur-sm",
+          )}
+        >
           <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/90 px-3 py-2">
             <span className="text-sm font-semibold text-zinc-100">
               Командный чат
@@ -279,7 +359,7 @@ function TasksChatPanel() {
                 setEmojiOpen(false);
               }}
             >
-              Свернуть
+              {isMobile ? "✕" : "Свернуть"}
             </button>
           </div>
 
@@ -389,26 +469,44 @@ function TasksChatPanel() {
             </div>
           </div>
         </div>
-      ) : null}
+  ) : null;
 
-      <button
-        type="button"
+  return (
+    <>
+      {isMobile && open
+        ? createPortal(
+            <div className="pointer-events-none fixed inset-0 z-[91]">
+              {chatPanel}
+            </div>,
+            document.body,
+          )
+        : null}
+      <div
         className={cx(
-          "pointer-events-auto rounded-full border border-zinc-600 bg-zinc-900/95 px-4 py-2.5 text-sm font-semibold text-zinc-100 shadow-lg shadow-black/40 ring-1 ring-zinc-700/80 transition hover:border-amber-500/50 hover:bg-zinc-800 hover:text-amber-100",
+          "pointer-events-none fixed z-[85] flex flex-col items-end gap-2",
+          isMobile ? "bottom-[4.75rem] right-3" : "bottom-4 right-4",
         )}
-        aria-expanded={open}
-        aria-label={open ? "Скрыть чат" : "Открыть чат"}
-        onClick={() =>
-          setOpen((o) => {
-            const next = !o;
-            if (!next) setEmojiOpen(false);
-            return next;
-          })
-        }
       >
-        Чат
-      </button>
-    </div>
+        {!isMobile && chatPanel}
+
+        {!open ? (
+          <button
+            type="button"
+            className={cx(
+              "pointer-events-auto border border-zinc-600 bg-zinc-900/95 text-zinc-100 shadow-lg shadow-black/40 ring-1 ring-zinc-700/80 transition hover:border-amber-500/50 hover:bg-zinc-800 hover:text-amber-100",
+              isMobile
+                ? "flex size-11 items-center justify-center rounded-full text-lg"
+                : "rounded-full px-4 py-2.5 text-sm font-semibold",
+            )}
+            aria-expanded={open}
+            aria-label="Открыть чат"
+            onClick={() => setOpen(true)}
+          >
+            {isMobile ? "💬" : "Чат"}
+          </button>
+        ) : null}
+      </div>
+    </>
   );
 }
 
@@ -735,6 +833,14 @@ export default function TasksClient({
   const [sortBy, setSortBy] =
     useState<(typeof SORT_OPTIONS)[number]["value"]>("newest");
   const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
+  const [dragInsert, setDragInsert] = useState<{
+    taskId: string;
+    position: "before" | "after";
+  } | null>(null);
+  const isMobileViewport = useIsMobileViewport();
+  const [mobileColumnIndex, setMobileColumnIndex] = useState(0);
+  const columnSwipeRef = useRef({ x: 0, y: 0 });
+  const taskSwipeRef = useRef({ x: 0, y: 0, didSwipe: false });
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const skipCardClickOpenRef = useRef(false);
@@ -983,24 +1089,22 @@ export default function TasksClient({
     const list = [...assigneeScopeTasks];
     const t = (d: string | Date) => new Date(d).getTime();
 
-    if (sortBy === "newest") {
-      list.sort((a, b) => t(b.createdAt) - t(a.createdAt));
-    } else if (sortBy === "oldest") {
-      list.sort((a, b) => t(a.createdAt) - t(b.createdAt));
-    } else {
-      list.sort((a, b) => {
-        const ia = TASK_STATUSES.indexOf(
-          a.status as (typeof TASK_STATUSES)[number],
-        );
-        const ib = TASK_STATUSES.indexOf(
-          b.status as (typeof TASK_STATUSES)[number],
-        );
-        const sa = ia === -1 ? TASK_STATUSES.length : ia;
-        const sb = ib === -1 ? TASK_STATUSES.length : ib;
-        if (sa !== sb) return sa - sb;
-        return t(b.createdAt) - t(a.createdAt);
-      });
-    }
+    list.sort((a, b) => {
+      const byOrder = compareSortOrder(a, b);
+      if (byOrder !== 0) return byOrder;
+      if (sortBy === "newest") return t(b.createdAt) - t(a.createdAt);
+      if (sortBy === "oldest") return t(a.createdAt) - t(b.createdAt);
+      const ia = TASK_STATUSES.indexOf(
+        a.status as (typeof TASK_STATUSES)[number],
+      );
+      const ib = TASK_STATUSES.indexOf(
+        b.status as (typeof TASK_STATUSES)[number],
+      );
+      const sa = ia === -1 ? TASK_STATUSES.length : ia;
+      const sb = ib === -1 ? TASK_STATUSES.length : ib;
+      if (sa !== sb) return sa - sb;
+      return t(b.createdAt) - t(a.createdAt);
+    });
     return list;
   }, [assigneeScopeTasks, sortBy]);
 
@@ -1219,7 +1323,7 @@ export default function TasksClient({
     }
 
     const data = (await response.json()) as { task: TaskListItem };
-    setTasks((prev) => [data.task, ...prev]);
+    setTasks((prev) => [...prev, data.task]);
     closeCreateModal();
   }
 
@@ -1588,12 +1692,48 @@ export default function TasksClient({
     }
   }
 
+  function getColumnTaskIds(
+    columnStatus: (typeof TASK_STATUSES)[number],
+  ): string[] {
+    return sortedFilteredTasks
+      .filter((t) => taskInKanbanColumn(t, columnStatus, weekMondayKey))
+      .map((t) => t.id);
+  }
+
+  async function saveColumnOrder(
+    columnStatus: (typeof TASK_STATUSES)[number],
+    orderedIds: string[],
+  ) {
+    setError(null);
+    const orderMap = new Map(orderedIds.map((id, i) => [id, i]));
+    setTasks((prev) =>
+      prev.map((t) =>
+        orderMap.has(t.id) ? { ...t, sortOrder: orderMap.get(t.id)! } : t,
+      ),
+    );
+
+    const response = await fetch("/api/tasks/reorder", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: columnStatus, taskIds: orderedIds }),
+    });
+
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: string }
+        | null;
+      setError(payload?.error ?? "Failed to save task order");
+      await reloadTasks();
+    }
+  }
+
   function handleColumnDragZone(
     columnStatus: (typeof TASK_STATUSES)[number],
     e: DragEvent<HTMLElement>,
   ) {
     e.preventDefault();
     setDragOverColumn(columnStatus);
+    e.dataTransfer.dropEffect = "move";
   }
 
   function handleColumnDragLeave(
@@ -1609,11 +1749,68 @@ export default function TasksClient({
     return (e: DragEvent<HTMLElement>) => {
       e.preventDefault();
       setDragOverColumn(null);
+      setDragInsert(null);
       const taskId = e.dataTransfer.getData("text/plain");
       if (!taskId) return;
       const task = tasks.find((t) => t.id === taskId);
-      if (!task || task.status === columnStatus) return;
+      if (!task) return;
+      if (task.status === columnStatus) {
+        void saveColumnOrder(
+          columnStatus,
+          moveTaskIdToEnd(getColumnTaskIds(columnStatus), taskId),
+        );
+        return;
+      }
       void handleStatusChange(taskId, columnStatus);
+    };
+  }
+
+  function handleTaskDragOver(
+    targetTaskId: string,
+    columnStatus: (typeof TASK_STATUSES)[number],
+  ) {
+    return (e: DragEvent<HTMLLIElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const rect = e.currentTarget.getBoundingClientRect();
+      const position =
+        e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+      setDragOverColumn(columnStatus);
+      setDragInsert({ taskId: targetTaskId, position });
+      e.dataTransfer.dropEffect = "move";
+    };
+  }
+
+  function handleTaskDrop(
+    targetTaskId: string,
+    columnStatus: (typeof TASK_STATUSES)[number],
+  ) {
+    return (e: DragEvent<HTMLLIElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragOverColumn(null);
+      setDragInsert(null);
+      const draggedId = e.dataTransfer.getData("text/plain");
+      if (!draggedId) return;
+      const task = tasks.find((t) => t.id === draggedId);
+      if (!task) return;
+      if (task.status !== columnStatus) {
+        void handleStatusChange(draggedId, columnStatus);
+        return;
+      }
+      if (draggedId === targetTaskId) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const position =
+        e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+      void saveColumnOrder(
+        columnStatus,
+        reorderTaskIds(
+          getColumnTaskIds(columnStatus),
+          draggedId,
+          targetTaskId,
+          position,
+        ),
+      );
     };
   }
 
@@ -1625,20 +1822,260 @@ export default function TasksClient({
     };
   }
 
+  function handleMobileColumnTouchStart(e: TouchEvent) {
+    columnSwipeRef.current = {
+      x: e.touches[0]?.clientX ?? 0,
+      y: e.touches[0]?.clientY ?? 0,
+    };
+  }
+
+  function handleMobileColumnTouchEnd(e: TouchEvent) {
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+    const dx = touch.clientX - columnSwipeRef.current.x;
+    const dy = touch.clientY - columnSwipeRef.current.y;
+    if (Math.abs(dx) < 48 || Math.abs(dy) > Math.abs(dx)) return;
+    if (dx < 0) {
+      setMobileColumnIndex((i) => Math.min(TASK_STATUSES.length - 1, i + 1));
+    } else {
+      setMobileColumnIndex((i) => Math.max(0, i - 1));
+    }
+  }
+
+  function handleTaskTouchStart(e: TouchEvent) {
+    taskSwipeRef.current = {
+      x: e.touches[0]?.clientX ?? 0,
+      y: e.touches[0]?.clientY ?? 0,
+      didSwipe: false,
+    };
+  }
+
+  function handleTaskTouchEnd(task: TaskListItem) {
+    return (e: TouchEvent) => {
+      const touch = e.changedTouches[0];
+      if (!touch) return;
+      const dx = touch.clientX - taskSwipeRef.current.x;
+      const dy = touch.clientY - taskSwipeRef.current.y;
+      if (Math.abs(dx) < 52 || Math.abs(dy) > Math.abs(dx) * 0.85) return;
+      const nextStatus =
+        dx > 0
+          ? adjacentTaskStatus(task.status, "next")
+          : adjacentTaskStatus(task.status, "prev");
+      if (!nextStatus || nextStatus === task.status) return;
+      taskSwipeRef.current.didSwipe = true;
+      skipCardClickOpenRef.current = true;
+      const nextIdx = TASK_STATUSES.indexOf(nextStatus);
+      if (nextIdx >= 0) setMobileColumnIndex(nextIdx);
+      void handleStatusChange(task.id, nextStatus);
+      window.setTimeout(() => {
+        skipCardClickOpenRef.current = false;
+      }, 200);
+    };
+  }
+
+  function renderKanbanColumn(
+    columnStatus: (typeof TASK_STATUSES)[number],
+    options: { mobile: boolean; showColumnTitle?: boolean },
+  ) {
+    const columnTasks = sortedFilteredTasks.filter((task) =>
+      taskInKanbanColumn(task, columnStatus, weekMondayKey),
+    );
+    const enableDrag = !isMobileViewport && !options.mobile;
+
+    return (
+      <div
+        key={options.mobile ? `mobile-${columnStatus}` : columnStatus}
+        className={cx(
+          "flex min-w-0 max-w-full flex-col overflow-x-hidden rounded-xl border border-zinc-800 bg-zinc-900/35 transition-colors",
+          options.mobile ? "min-h-[50vh] p-2" : "min-h-[220px] p-3",
+          enableDrag &&
+            dragOverColumn === columnStatus &&
+            "border-amber-500/50 bg-amber-950/25 ring-2 ring-amber-500/40",
+        )}
+        {...(enableDrag
+          ? {
+              onDragEnter: (e: DragEvent<HTMLElement>) =>
+                handleColumnDragZone(columnStatus, e),
+              onDragOver: (e: DragEvent<HTMLElement>) =>
+                handleColumnDragZone(columnStatus, e),
+              onDragLeave: (e: DragEvent<HTMLElement>) =>
+                handleColumnDragLeave(columnStatus, e),
+              onDrop: handleColumnDrop(columnStatus),
+            }
+          : {})}
+      >
+        {options.showColumnTitle !== false && !options.mobile ? (
+          <div className="mb-3 min-w-0 max-w-full break-words border-b border-zinc-800 pb-2 text-sm font-semibold text-zinc-200">
+            {COLUMN_LABELS[columnStatus]}
+          </div>
+        ) : null}
+        <ul
+          className="min-h-0 w-full min-w-0 max-w-full flex-1 space-y-0 overflow-x-hidden p-0 [&>li]:list-none"
+          {...(enableDrag
+            ? {
+                onDragEnter: (e: DragEvent<HTMLElement>) =>
+                  handleColumnDragZone(columnStatus, e),
+                onDragOver: (e: DragEvent<HTMLElement>) =>
+                  handleColumnDragZone(columnStatus, e),
+              }
+            : {})}
+        >
+          {columnTasks.map((task) => {
+            const overdue = isTaskDueDatePast(task.dueDate);
+            const compact = options.mobile;
+            return (
+              <li
+                key={task.id}
+                className={cx(
+                  "box-border w-full max-w-full list-none cursor-pointer overflow-hidden rounded-xl border border-zinc-700/90 bg-zinc-800/80 min-w-0 transition hover:border-zinc-600",
+                  compact ? "mb-2 p-2.5" : "mb-3 p-4",
+                  overdue &&
+                    "border-amber-700/55 bg-amber-950/25 ring-1 ring-amber-500/25",
+                  enableDrag &&
+                    dragInsert?.taskId === task.id &&
+                    dragInsert.position === "before" &&
+                    "border-t-2 border-t-amber-400",
+                  enableDrag &&
+                    dragInsert?.taskId === task.id &&
+                    dragInsert.position === "after" &&
+                    "border-b-2 border-b-amber-400",
+                )}
+                draggable={enableDrag}
+                {...(enableDrag
+                  ? {
+                      onDragStart: handleTaskDragStart(task.id),
+                      onDragEnd: () => {
+                        setDragOverColumn(null);
+                        setDragInsert(null);
+                        window.setTimeout(() => {
+                          skipCardClickOpenRef.current = false;
+                        }, 100);
+                      },
+                      onDragEnter: (e: DragEvent<HTMLLIElement>) =>
+                        handleColumnDragZone(columnStatus, e),
+                      onDragOver: handleTaskDragOver(task.id, columnStatus),
+                      onDrop: handleTaskDrop(task.id, columnStatus),
+                    }
+                  : {
+                      onTouchStart: handleTaskTouchStart,
+                      onTouchEnd: handleTaskTouchEnd(task),
+                    })}
+                onClick={() => {
+                  if (skipCardClickOpenRef.current) return;
+                  if (taskSwipeRef.current.didSwipe) {
+                    taskSwipeRef.current.didSwipe = false;
+                    return;
+                  }
+                  setSelectedTaskId(task.id);
+                }}
+              >
+                <div
+                  className={cx(
+                    "max-w-full break-words font-semibold leading-snug text-zinc-50 [overflow-wrap:anywhere]",
+                    compact ? "text-sm" : "text-lg",
+                  )}
+                >
+                  {task.title}
+                </div>
+                <div
+                  className={cx(
+                    "flex max-w-full flex-wrap items-center gap-1.5 break-words",
+                    compact ? "mt-1" : "mt-2 gap-2",
+                  )}
+                >
+                  {typeof task.priority === "number" &&
+                  task.priority >= 1 &&
+                  task.priority <= 5 ? (
+                    <span
+                      className={cx(
+                        priorityBadgeClass(task.priority),
+                        compact && "px-1.5 py-0 text-[10px]",
+                      )}
+                    >
+                      P {task.priority}
+                    </span>
+                  ) : null}
+                  {typeof task.effort === "number" ? (
+                    <span
+                      className={cx(
+                        effortBadgeClass(),
+                        compact && "px-1.5 py-0 text-[10px]",
+                      )}
+                    >
+                      E {task.effort}
+                    </span>
+                  ) : null}
+                  {(task._count?.comments ?? 0) > 0 ? (
+                    <span
+                      className={cx(
+                        "inline-flex items-center gap-0.5 font-medium tabular-nums text-zinc-400",
+                        compact ? "text-[10px]" : "text-[11px]",
+                      )}
+                    >
+                      💬 {task._count?.comments ?? 0}
+                    </span>
+                  ) : null}
+                  {compact && overdue ? (
+                    <span className="text-[10px] font-medium text-amber-400">
+                      просрочено
+                    </span>
+                  ) : null}
+                </div>
+                {!compact ? (
+                  <>
+                    <div className="mt-2 max-w-full break-words text-xs text-zinc-500 [overflow-wrap:anywhere]">
+                      Исполнитель:{" "}
+                      <span className="text-zinc-300">
+                        {task.assignee?.login ?? "—"}
+                      </span>
+                    </div>
+                    <div className="mt-1 max-w-full break-words text-xs text-zinc-500 [overflow-wrap:anywhere]">
+                      Постановщик:{" "}
+                      <span className="text-zinc-300">
+                        {task.createdBy?.login ?? "—"}
+                      </span>
+                    </div>
+                    <div
+                      className={cx(
+                        "mt-1 max-w-full break-words text-xs [overflow-wrap:anywhere]",
+                        overdue
+                          ? "font-semibold text-amber-400"
+                          : "text-zinc-500",
+                      )}
+                    >
+                      Дедлайн: {formatTaskDueDate(task.dueDate) ?? "—"}
+                    </div>
+                    {task.eventAt ? (
+                      <div className="mt-1 max-w-full break-words text-xs text-sky-400/90 [overflow-wrap:anywhere]">
+                        Событие: {formatTaskEventAt(task.eventAt) ?? "—"}
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    );
+  }
+
+  const mobileColumnStatus = TASK_STATUSES[mobileColumnIndex] ?? "todo";
+
   return (
     <>
-    <div className="relative left-1/2 w-screen max-w-none -translate-x-1/2 px-3 sm:px-5 lg:px-10">
-      <div className="w-full max-w-none space-y-5 rounded-2xl border border-zinc-800/90 bg-zinc-950 p-4 shadow-2xl shadow-black/40 sm:p-6">
+    <div className="relative left-1/2 w-screen max-w-none -translate-x-1/2 px-2 sm:px-5 lg:px-10">
+      <div className="w-full max-w-none space-y-3 rounded-2xl border border-zinc-800/90 bg-zinc-950 p-3 shadow-2xl shadow-black/40 sm:space-y-5 sm:p-6">
       <div>
-        <h2 className="text-xl font-semibold tracking-tight text-zinc-50 sm:text-2xl">
+        <h2 className="text-lg font-semibold tracking-tight text-zinc-50 sm:text-2xl">
           Задачи QuizHeroes
         </h2>
-        <p className="mt-1 text-sm text-zinc-500">
+        <p className="mt-0.5 hidden text-sm text-zinc-500 sm:block">
           Канбан-доска задач
         </p>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-lg border border-zinc-700 bg-zinc-900/70 px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 rounded-lg border border-zinc-700 bg-zinc-900/70 px-2 py-1.5 sm:gap-y-2 sm:px-3 sm:py-2">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2">
           <button
             type="button"
@@ -1656,7 +2093,7 @@ export default function TasksClient({
           </button>
           <label
             htmlFor="tasks-week-select"
-            className="shrink-0 text-xs font-medium text-zinc-400"
+            className="sr-only shrink-0 sm:not-sr-only sm:text-xs sm:font-medium sm:text-zinc-400"
           >
             Неделя
           </label>
@@ -1696,21 +2133,21 @@ export default function TasksClient({
           {!isReviewMode ? (
             <button
               type="button"
-              className={cx(btnSecondaryClass, "whitespace-nowrap")}
+              className={cx(btnSecondaryClass, "whitespace-nowrap px-2 py-1 text-[11px] sm:px-3 sm:py-1.5 sm:text-xs")}
               onClick={() => startReview()}
             >
-              Начать review
+              Review
             </button>
           ) : (
             <button
               type="button"
-              className={cx(btnSecondaryClass, "whitespace-nowrap")}
+              className={cx(btnSecondaryClass, "whitespace-nowrap px-2 py-1 text-[11px] sm:px-3 sm:py-1.5 sm:text-xs")}
               onClick={() => {
                 setIsReviewMode(false);
                 setCarrySelection({});
               }}
             >
-              Выйти из review
+              Выйти
             </button>
           )}
         </div>
@@ -1780,7 +2217,7 @@ export default function TasksClient({
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-300">
+      <div className="hidden flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-300 md:flex">
         <span>
           Всего задач:{" "}
           <span className="font-semibold text-zinc-100">{taskStats.total}</span>
@@ -1803,7 +2240,7 @@ export default function TasksClient({
         </span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-1 sm:gap-2">
         {telegramConnected ? (
           <>
             <span className="inline-flex items-center rounded-full border border-emerald-700/55 bg-emerald-950/35 px-3 py-1.5 text-xs font-medium text-emerald-300/95">
@@ -1861,7 +2298,7 @@ export default function TasksClient({
         ) : null}
         <button
           type="button"
-          className={btnPrimaryClass}
+          className={cx(btnPrimaryClass, "hidden md:inline-flex")}
           onClick={() => openCreateModal()}
         >
           Создать задачу
@@ -1874,11 +2311,11 @@ export default function TasksClient({
         </p>
       ) : null}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-1.5 sm:gap-2">
         <button
           type="button"
           className={cx(
-            "rounded-lg border px-4 py-2 text-sm font-medium transition",
+            "rounded-lg border px-3 py-1.5 text-xs font-medium transition sm:px-4 sm:py-2 sm:text-sm",
             tasksViewTab === "board"
               ? "border-amber-500/60 bg-amber-500/15 text-amber-100"
               : "border-zinc-600 bg-zinc-800/80 text-zinc-300 hover:border-zinc-500",
@@ -1890,7 +2327,7 @@ export default function TasksClient({
         <button
           type="button"
           className={cx(
-            "rounded-lg border px-4 py-2 text-sm font-medium transition",
+            "rounded-lg border px-3 py-1.5 text-xs font-medium transition sm:px-4 sm:py-2 sm:text-sm",
             tasksViewTab === "calendar"
               ? "border-amber-500/60 bg-amber-500/15 text-amber-100"
               : "border-zinc-600 bg-zinc-800/80 text-zinc-300 hover:border-zinc-500",
@@ -1902,7 +2339,7 @@ export default function TasksClient({
       </div>
 
       {(tasksViewTab === "calendar" || tasks.length > 0) ? (
-        <div className="mb-4 flex flex-wrap items-end gap-3">
+        <div className="mb-3 flex flex-wrap items-end gap-2 sm:mb-4 sm:gap-3">
           <div>
             <label htmlFor="sort-by" className={fieldLabelClass}>
               Сортировка
@@ -2100,122 +2537,76 @@ export default function TasksClient({
             )}
           </div>
 
-          <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {TASK_STATUSES.map((columnStatus) => {
-              const columnTasks = sortedFilteredTasks.filter((task) => {
-                if (task.status !== columnStatus) return false;
-                if (columnStatus === "backlog") return true;
-                return sprintTaskBelongsToWeek(task, weekMondayKey);
-              });
-              return (
-                <div
-                  key={columnStatus}
+          <div className="hidden min-w-0 grid-cols-1 gap-4 md:grid md:grid-cols-2 xl:grid-cols-4">
+            {TASK_STATUSES.map((columnStatus) =>
+              renderKanbanColumn(columnStatus, {
+                mobile: false,
+                showColumnTitle: true,
+              }),
+            )}
+          </div>
+
+          <div
+            className="md:hidden"
+            onTouchStart={handleMobileColumnTouchStart}
+            onTouchEnd={handleMobileColumnTouchEnd}
+          >
+            <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-zinc-700/90 bg-zinc-900/60 px-2 py-2">
+              <button
+                type="button"
+                className={weekNavArrowBtnClass}
+                aria-label="Предыдущая колонка"
+                disabled={mobileColumnIndex === 0}
+                onClick={() =>
+                  setMobileColumnIndex((i) => Math.max(0, i - 1))
+                }
+              >
+                ←
+              </button>
+              <div className="min-w-0 flex-1 text-center">
+                <p className="truncate text-sm font-semibold text-zinc-100">
+                  {COLUMN_LABELS[mobileColumnStatus]}
+                </p>
+                <p className="text-[10px] text-zinc-500">
+                  Свайп влево/вправо — колонки
+                </p>
+              </div>
+              <button
+                type="button"
+                className={weekNavArrowBtnClass}
+                aria-label="Следующая колонка"
+                disabled={mobileColumnIndex >= TASK_STATUSES.length - 1}
+                onClick={() =>
+                  setMobileColumnIndex((i) =>
+                    Math.min(TASK_STATUSES.length - 1, i + 1),
+                  )
+                }
+              >
+                →
+              </button>
+            </div>
+            <div className="mb-2 flex justify-center gap-1.5">
+              {TASK_STATUSES.map((status, idx) => (
+                <button
+                  key={status}
+                  type="button"
+                  aria-label={COLUMN_LABELS[status]}
                   className={cx(
-                    "flex min-h-[220px] min-w-0 max-w-full flex-col overflow-x-hidden rounded-xl border border-zinc-800 bg-zinc-900/35 p-3 transition-colors",
-                    dragOverColumn === columnStatus &&
-                      "border-amber-500/50 bg-amber-950/25 ring-2 ring-amber-500/40",
+                    "size-2 rounded-full transition",
+                    idx === mobileColumnIndex
+                      ? "bg-amber-400"
+                      : "bg-zinc-600 hover:bg-zinc-500",
                   )}
-                  onDragEnter={(e) => handleColumnDragZone(columnStatus, e)}
-                  onDragOver={(e) => handleColumnDragZone(columnStatus, e)}
-                  onDragLeave={(e) => handleColumnDragLeave(columnStatus, e)}
-                  onDrop={handleColumnDrop(columnStatus)}
-                >
-                  <div className="mb-3 min-w-0 max-w-full break-words border-b border-zinc-800 pb-2 text-sm font-semibold text-zinc-200">
-                    {COLUMN_LABELS[columnStatus]}
-                  </div>
-                  <ul
-                    className="min-h-0 w-full min-w-0 max-w-full flex-1 space-y-0 overflow-x-hidden p-0 [&>li]:list-none"
-                    onDragEnter={(e) => handleColumnDragZone(columnStatus, e)}
-                    onDragOver={(e) => handleColumnDragZone(columnStatus, e)}
-                  >
-                    {columnTasks.map((task) => {
-                      const overdue = isTaskDueDatePast(task.dueDate);
-                      return (
-                        <li
-                          key={task.id}
-                          className={cx(
-                            "mb-3 box-border w-full max-w-full list-none cursor-pointer overflow-hidden rounded-xl border border-zinc-700/90 bg-zinc-800/80 p-4 min-w-0 transition hover:border-zinc-600",
-                            overdue &&
-                              "border-amber-700/55 bg-amber-950/25 ring-1 ring-amber-500/25",
-                          )}
-                          draggable
-                          onDragStart={handleTaskDragStart(task.id)}
-                          onDragEnd={() => {
-                            setDragOverColumn(null);
-                            window.setTimeout(() => {
-                              skipCardClickOpenRef.current = false;
-                            }, 100);
-                          }}
-                          onDragEnter={(e) =>
-                            handleColumnDragZone(columnStatus, e)
-                          }
-                          onDragOver={(e) =>
-                            handleColumnDragZone(columnStatus, e)
-                          }
-                          onClick={() => {
-                            if (skipCardClickOpenRef.current) return;
-                            setSelectedTaskId(task.id);
-                          }}
-                        >
-                          <div className="max-w-full break-words text-lg font-semibold leading-snug text-zinc-50 [overflow-wrap:anywhere]">
-                            {task.title}
-                          </div>
-                          <div className="mt-2 flex max-w-full flex-wrap items-center gap-2 break-words">
-                            {typeof task.priority === "number" &&
-                            task.priority >= 1 &&
-                            task.priority <= 5 ? (
-                              <span
-                                className={priorityBadgeClass(task.priority)}
-                              >
-                                P {task.priority}
-                              </span>
-                            ) : null}
-                            {typeof task.effort === "number" ? (
-                              <span className={effortBadgeClass()}>
-                                E {task.effort}
-                              </span>
-                            ) : null}
-                            {(task._count?.comments ?? 0) > 0 ? (
-                              <span className="inline-flex items-center gap-0.5 text-[11px] font-medium tabular-nums text-zinc-400">
-                                💬 {task._count?.comments ?? 0}
-                              </span>
-                            ) : null}
-                          </div>
-                          <div className="mt-2 max-w-full break-words text-xs text-zinc-500 [overflow-wrap:anywhere]">
-                            Исполнитель:{" "}
-                            <span className="text-zinc-300">
-                              {task.assignee?.login ?? "—"}
-                            </span>
-                          </div>
-                          <div className="mt-1 max-w-full break-words text-xs text-zinc-500 [overflow-wrap:anywhere]">
-                            Постановщик:{" "}
-                            <span className="text-zinc-300">
-                              {task.createdBy?.login ?? "—"}
-                            </span>
-                          </div>
-                          <div
-                            className={cx(
-                              "mt-1 max-w-full break-words text-xs [overflow-wrap:anywhere]",
-                              overdue
-                                ? "font-semibold text-amber-400"
-                                : "text-zinc-500",
-                            )}
-                          >
-                            Дедлайн:{" "}
-                            {formatTaskDueDate(task.dueDate) ?? "—"}
-                          </div>
-                          {task.eventAt ? (
-                            <div className="mt-1 max-w-full break-words text-xs text-sky-400/90 [overflow-wrap:anywhere]">
-                              Событие:{" "}
-                              {formatTaskEventAt(task.eventAt) ?? "—"}
-                            </div>
-                          ) : null}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              );
+                  onClick={() => setMobileColumnIndex(idx)}
+                />
+              ))}
+            </div>
+            <p className="mb-2 text-center text-[10px] text-zinc-600">
+              Свайп карточки вправо — следующий статус, влево — предыдущий
+            </p>
+            {renderKanbanColumn(mobileColumnStatus, {
+              mobile: true,
+              showColumnTitle: false,
             })}
           </div>
         </>
@@ -2983,6 +3374,14 @@ export default function TasksClient({
           document.body,
         )
       : null}
+      <button
+        type="button"
+        className="fixed bottom-4 right-3 z-[84] flex size-14 items-center justify-center rounded-full bg-amber-500 text-2xl font-light leading-none text-zinc-950 shadow-lg shadow-black/50 transition hover:bg-amber-400 md:hidden"
+        aria-label="Создать задачу"
+        onClick={() => openCreateModal()}
+      >
+        +
+      </button>
       <TasksChatPanel />
     </>
   );

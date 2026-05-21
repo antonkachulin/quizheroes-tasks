@@ -40,7 +40,7 @@ export default async function TasksPage({
         },
       ],
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
     include: taskListInclude,
   });
 

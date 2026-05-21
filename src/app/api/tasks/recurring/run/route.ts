@@ -8,6 +8,7 @@ import {
   isRecurrenceType,
   shiftPreservingWeekOffset,
 } from "@/lib/recurrence";
+import { nextSortOrderForStatus } from "@/lib/task-sort-order";
 import { mondayDateFromKey, utcMondayKeyContaining } from "@/lib/week";
 
 export async function POST() {
@@ -55,11 +56,14 @@ export async function POST() {
         newWeekStart,
       );
 
+      const sortOrder = await nextSortOrderForStatus("todo");
+
       await prisma.task.create({
         data: {
           title: parent.title,
           description: parent.description,
           status: "todo",
+          sortOrder,
           priority: parent.priority,
           effort: parent.effort,
           dueDate: newDue,

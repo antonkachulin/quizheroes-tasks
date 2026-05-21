@@ -12,6 +12,7 @@ export type TaskListItem = {
   title: string;
   description: string;
   status: string;
+  sortOrder: number;
   priority: number;
   effort: number;
   dueDate: Date | null;

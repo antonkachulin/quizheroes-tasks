@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { taskListInclude } from "@/lib/task-list";
 import { verifySessionToken } from "@/lib/session";
+import { nextSortOrderForStatus } from "@/lib/task-sort-order";
 import { creatorUserId, notifyTaskDoneTelegram } from "@/lib/task-telegram-notify";
 import {
   computeInitialRecurrenceNextDateDays,
@@ -74,6 +75,7 @@ export async function PATCH(
     recurrenceNextDate?: Date | null;
     recurrenceIntervalDays?: number | null;
     overdueReminderSentAt?: Date | null;
+    sortOrder?: number;
   } = {};
 
   if (typeof body.title === "string") {
@@ -100,6 +102,9 @@ export async function PATCH(
       return NextResponse.json({ error: "Invalid status" }, { status: 400 });
     }
     data.status = body.status;
+    if (body.status !== existingTask.status) {
+      data.sortOrder = await nextSortOrderForStatus(body.status);
+    }
   }
 
   if (typeof body.priority !== "undefined") {
@@ -222,8 +227,8 @@ export async function PATCH(
 
   const task = await prisma.task.update({
     where: { id },
-    data: data as never,
-    include: taskListInclude as never,
+    data,
+    include: taskListInclude,
   });
 
   const newStatus = (task.status ?? "").trim();

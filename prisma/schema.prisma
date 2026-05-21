@@ -41,6 +41,7 @@ model Task {
   title             String
   description       String
   status            String    @default("todo")
+  sortOrder         Int       @default(0)
   priority          Int
   effort            Int
   dueDate           DateTime?

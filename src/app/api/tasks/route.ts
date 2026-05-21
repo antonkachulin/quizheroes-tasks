@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { taskListInclude } from "@/lib/task-list";
 import { verifySessionToken } from "@/lib/session";
+import { nextSortOrderForStatus } from "@/lib/task-sort-order";
 import { notifyTaskCreatedTelegram } from "@/lib/task-telegram-notify";
 import { computeInitialRecurrenceNextDateDays } from "@/lib/recurrence";
 import {
@@ -63,8 +64,8 @@ export async function GET(request: Request) {
         },
       ],
     },
-    orderBy: { createdAt: "desc" },
-    include: taskListInclude as never,
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+    include: taskListInclude,
   });
 
   return NextResponse.json({ tasks });
@@ -186,11 +187,14 @@ export async function POST(request: Request) {
   }
 
   try {
+    const sortOrder = await nextSortOrderForStatus(status);
+
     const task = await prisma.task.create({
       data: {
         title,
         description,
         status,
+        sortOrder,
         priority,
         effort,
         dueDate,
@@ -202,8 +206,8 @@ export async function POST(request: Request) {
         user: { connect: { id: userId } },
         createdBy: { connect: { id: userId } },
         ...(assigneeId ? { assignee: { connect: { id: assigneeId } } } : {}),
-      } as never,
-      include: taskListInclude as never,
+      },
+      include: taskListInclude,
     });
 
     try {
